@@ -8,12 +8,14 @@ import os
 import os.path as osp
 import pickle
 import torch_geometric.transforms as T
+import shutil
+import numpy as np
 
 from cSBM_dataset import dataset_ContextualSBM
 from torch_geometric.datasets import Planetoid
 from torch_geometric.datasets import Amazon
 from torch_geometric.datasets import WikipediaNetwork
-from torch_geometric.datasets import Actor
+from torch_geometric.datasets import Actor, LINKXDataset
 from torch_sparse import coalesce
 from torch_geometric.data import InMemoryDataset, download_url, Data
 from torch_geometric.utils.undirected import to_undirected
@@ -161,39 +163,95 @@ class WebKB(InMemoryDataset):
         return '{}()'.format(self.name)
 
 
+class Hetero_Yandex(InMemoryDataset):
+    def __init__(self, root, name, transform=None, pre_transform=None):
+        self.name = name.lower()
+        assert self.name in ['amazon_ratings', 'roman_empire',
+                             'tolokers', 'questions', 'minesweeper']
+
+        super().__init__(root, transform, pre_transform)
+        self.data, self.slices = torch.load(self.processed_paths[0])
+
+    @property
+    def raw_dir(self):
+        return osp.join(self.root, self.name, 'raw')
+
+    @property
+    def processed_dir(self):
+        return osp.join(self.root, self.name, 'processed')
+
+    @property
+    def raw_file_names(self):
+        out = [f'{self.name}.npz']
+        return out
+
+    @property
+    def processed_file_names(self):
+        return 'data.pt'
+
+    def download(self):
+        shutil.copy(
+            f'/home/guy/Downloads/heterophilous-graphs-main/data/{self.name}.npz', self.raw_dir)
+        return f'/home/guy/Downloads/heterophilous-graphs-main/data/{self.name}.npz'
+
+    def process(self):
+        raw_data = np.load(self.raw_paths[0])
+        x = torch.tensor(raw_data['node_features'])
+        y = torch.tensor(raw_data['node_labels'])
+        edge_index = torch.tensor(raw_data['edges']).transpose(0, 1)
+        train_mask = torch.tensor(raw_data['train_masks'])
+        val_mask = torch.tensor(raw_data['val_masks'])
+        test_mask = torch.tensor(raw_data['test_masks'])
+
+        data = Data(x=x, edge_index=edge_index, y=y, train_mask=train_mask,
+                    val_mask=val_mask, test_mask=test_mask)
+        data = data if self.pre_transform is None else self.pre_transform(data)
+        torch.save(self.collate([data]), self.processed_paths[0])
+
+    def __repr__(self) -> str:
+        return f'{self.name}()'
+
+
 def DataLoader(name):
-    if 'cSBM_data' in name:
-        path = '~/data/'
+    if 'cSBM' in name:
+        path = '~/data/cSBM'
         dataset = dataset_ContextualSBM(path, name=name)
     else:
         name = name.lower()
 
-    if name in ['cora', 'citeseer', 'pubmed']:
-        root_path = '~/'
-        path = osp.join(root_path, 'data', name)
-        dataset = Planetoid(path, name, transform=T.NormalizeFeatures())
-    elif name in ['computers', 'photo']:
-        root_path = '~/'
-        path = osp.join(root_path, 'data', name)
-        dataset = Amazon(path, name, T.NormalizeFeatures())
-    elif name in ['chameleon', 'squirrel']:
-        # use everything from "geom_gcn_preprocess=False" and
-        # only the node label y from "geom_gcn_preprocess=True"
-        preProcDs = WikipediaNetwork(
-            root='~/data/', name=name, geom_gcn_preprocess=False, transform=T.NormalizeFeatures())
-        dataset = WikipediaNetwork(
-            root='~/data/', name=name, geom_gcn_preprocess=True, transform=T.NormalizeFeatures())
-        data = dataset[0]
-        data.edge_index = preProcDs[0].edge_index
-        return dataset, data
+        if name in ['cora', 'citeseer', 'pubmed']:
+            root_path = '~/'
+            path = osp.join(root_path, 'data', name)
+            dataset = Planetoid(path, name, transform=T.NormalizeFeatures())
+        elif name in ['computers', 'photo']:
+            root_path = '~/'
+            path = osp.join(root_path, 'data', name)
+            dataset = Amazon(path, name, T.NormalizeFeatures())
+        elif name in ['chameleon', 'squirrel']:
+            # use everything from "geom_gcn_preprocess=False" and
+            # only the node label y from "geom_gcn_preprocess=True"
+            preProcDs = WikipediaNetwork(
+                root='~/data/', name=name, geom_gcn_preprocess=False, transform=T.NormalizeFeatures())
+            dataset = WikipediaNetwork(
+                root='~/data/', name=name, geom_gcn_preprocess=True, transform=T.NormalizeFeatures())
+            data = dataset[0]
+            data.edge_index = preProcDs[0].edge_index
+            return dataset, data
 
-    elif name in ['film']:
-        dataset = Actor(
-            root='~/data/film', transform=T.NormalizeFeatures())
-    elif name in ['texas', 'cornell']:
-        dataset = WebKB(root='~/data/',
-                        name=name, transform=T.NormalizeFeatures())
-    else:
-        raise ValueError(f'dataset {name} not supported in dataloader')
+        elif name in ['film']:
+            dataset = Actor(
+                root='~/data/film', transform=T.NormalizeFeatures())
+        elif name in ['texas', 'cornell']:
+            dataset = WebKB(root='~/data/',
+                            name=name, transform=T.NormalizeFeatures())
+        elif name in ['amazon_ratings', 'roman_empire', 'tolokers', 'questions', 'minesweeper']:
+            dataset = Hetero_Yandex(
+                root='~/data/', name=name, transform=T.Compose([T.NormalizeFeatures(), T.ToUndirected()]))
+
+        elif name in ['penn94', 'reed98', 'amherst41', 'cornell5', 'johnshopkins55', 'genius', 'wiki']:
+            dataset = LINKXDataset(root='~/data/', name=name,
+                                   transform=T.Compose([T.NormalizeFeatures(), T.ToUndirected()]))
+        else:
+            raise ValueError(f'dataset {name} not supported in dataloader')
 
     return dataset, dataset[0]
