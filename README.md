@@ -1,6 +1,7 @@
 # GPRGNN-L
 
 This is the source code for our ECML-PKDD 2023 paper:
+''Leveraging Free Labels to Power Up Heterophilic Graph Learning in Weakly-Supervised Settings: An Empirical Study''
 
 # Repreduce results in our paper:
 We save all the results of our experiments in the results folder, the naming for the file is:
